@@ -15,10 +15,11 @@ st.set_page_config(
 # --- Define the static file path and expected sheet names ---
 FILE_PATH = "stock_prices.xlsx" # The file must be in the same directory as this script.
 
+# FIX: Changed "Tata Steel" sheet name to "Tata steel" (lowercase 's') to match likely Excel sheet
 EXPECTED_SHEETS = {
     "Asian Paints": "AsianPaints",
     "SBI": "SBI",
-    "Tata Steel": "Tata Steel"
+    "Tata Steel": "Tata steel" 
 }
 SIMULATED_SHEET_NAME = "Simulated Price"
 
@@ -66,12 +67,8 @@ def process_simulated_sheet(df):
 
 @st.cache_data
 def load_all_data(file_path):
-    """
-    Reads all sheets from the static Excel file path. 
-    Using @st.cache_data ensures fast performance after the first run.
-    """
+    """Reads all sheets from the static Excel file path."""
     try:
-        # Read ALL sheets from the Excel file
         all_sheets = pd.read_excel(file_path, sheet_name=None, engine='openpyxl')
     except FileNotFoundError:
         return pd.DataFrame(), pd.DataFrame(), "File not found. Please ensure 'stock_price.xlsx' is in the same directory as the script."
@@ -133,7 +130,18 @@ st.sidebar.info("Data loaded successfully from the 'stock_price.xlsx' file in th
     
 # Filter the data for the selected stock
 df_selected_hist = df_historical[df_historical['STOCK'] == selected_stock]
-# Use .str.contains for flexible matching, assuming the STOCK column has the name
+
+# ERROR PREVENTION: Check if the historical data frame is empty
+if df_selected_hist.empty:
+    st.title(f"Data Not Found for {selected_stock}")
+    st.error(f"Historical data for {selected_stock} could not be loaded or is empty after cleaning.")
+    st.stop()
+
+# This is the line that was crashing, now it's protected by the check above
+last_hist_close = df_selected_hist['CLOSE'].iloc[-1] 
+    
+# Use .str.contains for flexible matching in simulated data (e.g., 'Tata Steel' vs 'Tata steel')
+# This assumes the 'STOCK' column in the simulated data has the name string.
 df_selected_sim = df_simulated[df_simulated['STOCK'].str.contains(selected_stock.split()[0], case=False, na=False)].iloc[0]
 
 
@@ -144,7 +152,6 @@ st.markdown("### Simulated Price & Performance")
 
 simulated_price = df_selected_sim['CLOSE']
 change_pct = df_selected_sim['CHANGE_PCT'] * 100 
-last_hist_close = df_selected_hist['CLOSE'].iloc[-1] 
 
 kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
 
@@ -164,6 +171,7 @@ kpi_col2.metric(
 )
 
 # Get 52W High/Low from the *entire* historical dataset for context
+# These lines rely on df_selected_hist not being empty, which is checked above.
 w52_high = df_selected_hist['52W H'].max()
 w52_low = df_selected_hist['52W L'].min()
 
