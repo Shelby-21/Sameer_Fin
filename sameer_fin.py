@@ -12,8 +12,9 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Define the expected sheet names in the single uploaded Excel file
-# IMPORTANT: Ensure your sheet names in stock_price.xlsx match these exactly.
+# --- Define the static file path and expected sheet names ---
+FILE_PATH = "stock_price.xlsx" # The file must be in the same directory as this script.
+
 EXPECTED_SHEETS = {
     "Asian Paints": "AsianPaints",
     "SBI": "SBI",
@@ -64,14 +65,16 @@ def process_simulated_sheet(df):
     return df.dropna(subset=['DATE', 'CLOSE'])
 
 @st.cache_data
-def load_all_data(uploaded_file):
-    """Reads all sheets from the uploaded Excel file."""
-    if uploaded_file is None:
-        return pd.DataFrame(), pd.DataFrame(), "Please upload the data."
-    
+def load_all_data(file_path):
+    """
+    Reads all sheets from the static Excel file path. 
+    Using @st.cache_data ensures fast performance after the first run.
+    """
     try:
         # Read ALL sheets from the Excel file
-        all_sheets = pd.read_excel(uploaded_file, sheet_name=None, engine='openpyxl')
+        all_sheets = pd.read_excel(file_path, sheet_name=None, engine='openpyxl')
+    except FileNotFoundError:
+        return pd.DataFrame(), pd.DataFrame(), "File not found. Please ensure 'stock_price.xlsx' is in the same directory as the script."
     except Exception as e:
         return pd.DataFrame(), pd.DataFrame(), f"Error reading Excel file: {e}"
 
@@ -91,57 +94,47 @@ def load_all_data(uploaded_file):
     if SIMULATED_SHEET_NAME in all_sheets:
         df_simulated = process_simulated_sheet(all_sheets[SIMULATED_SHEET_NAME])
 
-    # Check for critical data failure
+    # Final check for critical data
     if df_historical.empty or df_simulated.empty:
-        return pd.DataFrame(), pd.DataFrame(), "One or more critical sheets were empty or missing expected columns."
+        missing_sheets = [name for name, sheet in EXPECTED_SHEETS.items() if sheet not in all_sheets]
+        if SIMULATED_SHEET_NAME not in all_sheets: missing_sheets.append(SIMULATED_SHEET_NAME)
+        
+        return pd.DataFrame(), pd.DataFrame(), f"One or more required sheets are missing or empty: {', '.join(missing_sheets)}"
 
     return df_historical, df_simulated, None
 
 
-# --- 3. SIDEBAR AND FILE UPLOADER ---
+# --- 3. LOAD DATA AND HANDLE ERRORS ---
 
-st.sidebar.title("⚙️ Data & Controls")
+df_historical, df_simulated, error_message = load_all_data(FILE_PATH)
 
-# File Uploader component
-uploaded_file = st.sidebar.file_uploader(
-    "1. Upload the 'stock_price.xlsx' file here:", 
-    type=['xlsx']
-)
+st.sidebar.title("⚙️ Stock Selector")
 
-# Load the processed data
-df_historical, df_simulated, error_message = load_all_data(uploaded_file)
-
-# Handle case where file is not yet uploaded
-if uploaded_file is None:
-    st.title("Welcome to the Stock Analysis Dashboard")
-    st.info("⬆️ Please upload your multi-sheet Excel file to begin the analysis.")
-    st.markdown("---")
-    st.warning(f"Ensure your sheets are named: `{', '.join(EXPECTED_SHEETS.values())}` and `{SIMULATED_SHEET_NAME}`.")
-    st.stop()
-    
-# Handle case where data processing failed
+# Global error handling for file loading or processing
 if error_message:
-    st.title("Error in Data Processing")
+    st.title("Data Loading Error")
     st.error(error_message)
+    st.markdown("Please verify that:")
+    st.markdown(f"1. The file `{FILE_PATH}` is present in the repository.")
+    st.markdown(f"2. The Excel sheets are correctly named: `{', '.join(EXPECTED_SHEETS.values())}` and `{SIMULATED_SHEET_NAME}`.")
     st.stop()
     
 # --- Proceed with dashboard rendering if data is successful ---
 
-st.sidebar.markdown("---")
-    
-# Stock Selector now available after successful upload
+# Stock Selector
 selected_stock = st.sidebar.selectbox(
-    "2. Choose a Stock for Detailed View:",
+    "Choose a Stock for Detailed View:",
     options=list(EXPECTED_SHEETS.keys()),
     index=0 
 )
 st.sidebar.markdown("---")
-st.sidebar.info("Data successfully loaded and processed.")
+st.sidebar.info("Data loaded successfully from the 'stock_price.xlsx' file in the repository.")
 
     
 # Filter the data for the selected stock
 df_selected_hist = df_historical[df_historical['STOCK'] == selected_stock]
-df_selected_sim = df_simulated[df_simulated['STOCK'].str.contains(selected_stock, case=False, na=False)].iloc[0]
+# Use .str.contains for flexible matching, assuming the STOCK column has the name
+df_selected_sim = df_simulated[df_simulated['STOCK'].str.contains(selected_stock.split()[0], case=False, na=False)].iloc[0]
 
 
 # --- 4. MAIN DASHBOARD HEADER & SIMULATION KPIs (Aesthetic & Immediate Insight) ---
