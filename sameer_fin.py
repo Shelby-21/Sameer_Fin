@@ -12,27 +12,27 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# --- 2. DATA CONSTANTS & LOADING (Cleaned Data) ---
-
-# Define the original file paths based on the uploaded data
-HISTORICAL_FILES = {
-    "Asian Paints": "stock prices.xlsx - AsianPaints.csv",
-    "SBI": "stock prices.xlsx - SBI.csv",
-    "Tata Steel": "stock prices.xlsx - Tata steel.csv"
+# Define the expected sheet names in the single uploaded Excel file
+# IMPORTANT: Ensure your sheet names in stock_price.xlsx match these exactly.
+EXPECTED_SHEETS = {
+    "Asian Paints": "AsianPaints",
+    "SBI": "SBI",
+    "Tata Steel": "Tata Steel"
 }
-SIMULATED_FILE = "stock prices.xlsx"
+SIMULATED_SHEET_NAME = "Simulated Price"
 
-# Function to clean and process each historical stock file
-def process_historical_file(file_path, stock_name):
-    try:
-        df = pd.read_excel(file_path)
-    except Exception:
-        return None
+
+# --- 2. CORE DATA PROCESSING FUNCTIONS ---
+
+# Function to clean and process a historical stock sheet
+def process_historical_sheet(df, stock_name):
+    if df.empty: return pd.DataFrame()
 
     # Cleaning: Remove footer/metadata (rows where DATE is not a date)
     if 'DATE' in df.columns:
         df['DATE_cleaned'] = pd.to_datetime(df['DATE'], errors='coerce')
         first_invalid_date_index = df[df['DATE_cleaned'].isna()].index.min()
+        
         if not pd.isna(first_invalid_date_index):
             df = df.iloc[:first_invalid_date_index]
         df = df.drop(columns=['DATE_cleaned'])
@@ -46,60 +46,102 @@ def process_historical_file(file_path, stock_name):
     df['DATE'] = pd.to_datetime(df['DATE'], errors='coerce')
     df['STOCK'] = stock_name
     
-    # Sort for time series analysis
     return df.dropna(subset=['DATE', 'CLOSE']).sort_values(by='DATE', ascending=True)
 
-def process_simulated_data(file_path):
-    try:
-        df = pd.read_csv(file_path)
-        # Clean column names
-        df.columns = [col.strip().replace(' ', '_').replace('(', '').replace(')', '').replace('%', 'PCT') for col in df.columns]
-        df['DATE'] = pd.to_datetime(df['DATE'])
-        
-        numeric_cols_sim = ['CLOSE', 'CHANGE_PCT', 'VOLUME']
-        for col in numeric_cols_sim:
-            if col in df.columns:
-                df[col] = pd.to_numeric(df[col], errors='coerce')
-        return df
-    except Exception:
-        return pd.DataFrame()
+# Function to process the simulated data sheet
+def process_simulated_sheet(df):
+    if df.empty: return pd.DataFrame()
+    
+    # Clean column names (e.g., 'CHANGE (%)' to 'CHANGE_PCT')
+    df.columns = [col.strip().replace(' ', '_').replace('(', '').replace(')', '').replace('%', 'PCT') for col in df.columns]
+    df['DATE'] = pd.to_datetime(df['DATE'], errors='coerce')
+    
+    numeric_cols_sim = ['CLOSE', 'CHANGE_PCT', 'VOLUME']
+    for col in numeric_cols_sim:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors='coerce')
+    
+    return df.dropna(subset=['DATE', 'CLOSE'])
 
 @st.cache_data
-def load_all_data():
-    """Loads and preprocesses all data."""
-    all_historical_data = []
-    for name, path in HISTORICAL_FILES.items():
-        df_temp = process_historical_file(path, name)
-        if df_temp is not None:
-            all_historical_data.append(df_temp)
-            
-    df_historical = pd.concat(all_historical_data, ignore_index=True) if all_historical_data else pd.DataFrame()
-    df_simulated = process_simulated_data(SIMULATED_FILE)
+def load_all_data(uploaded_file):
+    """Reads all sheets from the uploaded Excel file."""
+    if uploaded_file is None:
+        return pd.DataFrame(), pd.DataFrame(), "Please upload the data."
     
-    return df_historical, df_simulated
+    try:
+        # Read ALL sheets from the Excel file
+        all_sheets = pd.read_excel(uploaded_file, sheet_name=None, engine='openpyxl')
+    except Exception as e:
+        return pd.DataFrame(), pd.DataFrame(), f"Error reading Excel file: {e}"
+
+    all_historical_data = []
+    
+    # Process Historical Sheets
+    for stock_key, sheet_name in EXPECTED_SHEETS.items():
+        if sheet_name in all_sheets:
+            df_temp = process_historical_sheet(all_sheets[sheet_name], stock_key)
+            if not df_temp.empty:
+                all_historical_data.append(df_temp)
+        
+    df_historical = pd.concat(all_historical_data, ignore_index=True) if all_historical_data else pd.DataFrame()
+
+    # Process Simulated Sheet
+    df_simulated = pd.DataFrame()
+    if SIMULATED_SHEET_NAME in all_sheets:
+        df_simulated = process_simulated_sheet(all_sheets[SIMULATED_SHEET_NAME])
+
+    # Check for critical data failure
+    if df_historical.empty or df_simulated.empty:
+        return pd.DataFrame(), pd.DataFrame(), "One or more critical sheets were empty or missing expected columns."
+
+    return df_historical, df_simulated, None
+
+
+# --- 3. SIDEBAR AND FILE UPLOADER ---
+
+st.sidebar.title("⚙️ Data & Controls")
+
+# File Uploader component
+uploaded_file = st.sidebar.file_uploader(
+    "1. Upload the 'stock_price.xlsx' file here:", 
+    type=['xlsx']
+)
 
 # Load the processed data
-df_historical, df_simulated = load_all_data()
+df_historical, df_simulated, error_message = load_all_data(uploaded_file)
 
-if df_historical.empty or df_simulated.empty:
-    st.error("❌ Data files could not be loaded. Please ensure all CSV files are in the same directory.")
+# Handle case where file is not yet uploaded
+if uploaded_file is None:
+    st.title("Welcome to the Stock Analysis Dashboard")
+    st.info("⬆️ Please upload your multi-sheet Excel file to begin the analysis.")
+    st.markdown("---")
+    st.warning(f"Ensure your sheets are named: `{', '.join(EXPECTED_SHEETS.values())}` and `{SIMULATED_SHEET_NAME}`.")
     st.stop()
     
-# --- 3. SIDEBAR AND FILTERS ---
+# Handle case where data processing failed
+if error_message:
+    st.title("Error in Data Processing")
+    st.error(error_message)
+    st.stop()
+    
+# --- Proceed with dashboard rendering if data is successful ---
 
-st.sidebar.title("⚙️ Stock Selector")
+st.sidebar.markdown("---")
+    
+# Stock Selector now available after successful upload
 selected_stock = st.sidebar.selectbox(
-    "Choose a Stock for Detailed View:",
-    options=list(HISTORICAL_FILES.keys()),
+    "2. Choose a Stock for Detailed View:",
+    options=list(EXPECTED_SHEETS.keys()),
     index=0 
 )
 st.sidebar.markdown("---")
-st.sidebar.info("This dashboard provides an in-depth view of historical price movements and the final simulated close price.")
+st.sidebar.info("Data successfully loaded and processed.")
 
-
+    
 # Filter the data for the selected stock
 df_selected_hist = df_historical[df_historical['STOCK'] == selected_stock]
-df_selected_sim = df_simulated[df_simulated['STOCK'] == selected_stock].iloc[0]
+df_selected_sim = df_simulated[df_simulated['STOCK'].str.contains(selected_stock, case=False, na=False)].iloc[0]
 
 
 # --- 4. MAIN DASHBOARD HEADER & SIMULATION KPIs (Aesthetic & Immediate Insight) ---
@@ -109,7 +151,7 @@ st.markdown("### Simulated Price & Performance")
 
 simulated_price = df_selected_sim['CLOSE']
 change_pct = df_selected_sim['CHANGE_PCT'] * 100 
-last_hist_close = df_selected_hist['CLOSE'].iloc[-1] # Last known historical close price
+last_hist_close = df_selected_hist['CLOSE'].iloc[-1] 
 
 kpi_col1, kpi_col2, kpi_col3, kpi_col4 = st.columns(4)
 
@@ -162,8 +204,8 @@ fig_candle = go.Figure(data=[go.Candlestick(
     high=df_selected_hist['HIGH'],
     low=df_selected_hist['LOW'],
     close=df_selected_hist['CLOSE'],
-    increasing_line_color='#00CC96',  # Green for up
-    decreasing_line_color='#EF553B',  # Red for down
+    increasing_line_color='#00CC96',
+    decreasing_line_color='#EF553B',
     name='Historical Price'
 )])
 
@@ -180,7 +222,7 @@ fig_candle.update_layout(
     title=f'{selected_stock} Historical OHLC with Simulated Target',
     xaxis_title='Date',
     yaxis_title='Price (₹)',
-    xaxis_rangeslider_visible=False, # Hide range slider for cleaner look
+    xaxis_rangeslider_visible=False,
     template="plotly_white",
     height=500,
     margin=dict(t=50, l=10, r=10, b=10)
@@ -212,16 +254,16 @@ st.markdown("---")
 
 st.markdown("### Cross-Stock Simulated Price Comparison")
 
-# Bar chart comparing all three simulated close prices
+df_sim_comp = df_simulated.sort_values(by='CLOSE', ascending=False)
 fig_comp = px.bar(
-    df_simulated.sort_values(by='CLOSE', ascending=False), # Sort for better visualization
+    df_sim_comp, 
     x='STOCK', 
     y='CLOSE', 
     color='STOCK', 
     title='Simulated Stock Closing Prices (2025-12-31)',
     labels={'CLOSE': 'Simulated Price (₹)', 'STOCK': 'Stock'},
-    template="plotly_dark", # Using dark theme for aesthetic contrast
-    text_auto='$.2s' # Automatically show value on bar
+    template="plotly_dark",
+    text_auto='$.2s' 
 )
 fig_comp.update_layout(
     xaxis_title="",
