@@ -25,7 +25,7 @@ SIMULATED_FILE = "stock prices.xlsx"
 # Function to clean and process each historical stock file
 def process_historical_file(file_path, stock_name):
     try:
-        df = pd.read_csv(file_path)
+        df = pd.read_excel(file_path)
     except Exception:
         return None
 
