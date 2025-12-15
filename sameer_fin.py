@@ -13,7 +13,7 @@ st.set_page_config(
 )
 
 # --- Define the static file path and expected sheet names ---
-FILE_PATH = "stock_price.xlsx" # The file must be in the same directory as this script.
+FILE_PATH = "stock_prices.xlsx" # The file must be in the same directory as this script.
 
 EXPECTED_SHEETS = {
     "Asian Paints": "AsianPaints",
